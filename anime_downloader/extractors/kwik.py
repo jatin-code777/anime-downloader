@@ -2,6 +2,7 @@ import logging
 import re
 from anime_downloader.extractors.base_extractor import BaseExtractor
 from anime_downloader.sites import helpers
+from anime_downloader.util import base36encode
 
 logger = logging.getLogger(__name__)
 
@@ -15,12 +16,38 @@ class Kwik(BaseExtractor):
 
     def _get_data(self):
 
-        # Need a javascript deobsufication api/python, so someone smarter
+        # Need a better javascript deobfuscation api/python, so someone smarter
         # than me can work on that for now I will add the pattern I observed
 
-        # alternatively you can pattern match on `src` for stream_url part
-        source_parts_re = re.compile(r'action=\"([^"]+)\".*value=\"([^"]+)\".*Click Here to Download',
-                                     re.DOTALL)
+        # Kwik has added dirty javascript packing, a general solution will need
+        # a headless browser (to render the js) which is too big a dependency.
+        # For now, manually unpacking to extract url, token
+        # Will need to be changed when Kwik changes their js packing mechanism
+
+        def get_source_parts(page_text):
+            
+            def unpack_javascript(p, a, c, k, _e, d):
+
+                def e(c):
+                    c2 = c % a
+                    return (
+                        ("" if c < a else e(c//a)) +
+                        (chr(c2 + 29) if c2 > 35 else base36encode(c2).lower())
+                    )
+                d.update((e(i), k[i] or e(i)) for i in range(c))
+
+                clear_js = re.sub("\\b\\w+\\b", lambda i: d[i.group()], p)
+
+                var_name = re.search(r'\b(\w+)\.split\(""\)', clear_js).group(1)
+                token    = re.search(f'var {var_name}="(\\w+)"', clear_js).group(1)[::-1]
+                post_url = re.search(r'<form action="(.*)"method="POST">', clear_js).group(1)
+
+                return post_url, token
+
+            # Extract Arguments of the packed javascript function
+            m = re.search(
+                r'<script>\s*eval\(function\(p,a,c,k,e,d\).*}(\(.*\))\)\s*</script>', page_text)
+            return eval('unpack_javascript' + m.group(1))        
 
         # Kwik servers don't have direct link access you need to be referred
         # from somewhere, I will just use the url itself.
@@ -28,7 +55,7 @@ class Kwik(BaseExtractor):
         download_url = self.url.replace('kwik.cx/e/', 'kwik.cx/f/')
 
         kwik_text = helpers.get(download_url, referer=download_url).text
-        post_url, token = source_parts_re.search(kwik_text).group(1, 2)
+        post_url, token = get_source_parts(kwik_text)
 
         stream_url = helpers.post(post_url,
                                   referer=download_url,

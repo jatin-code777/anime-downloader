@@ -253,6 +253,14 @@ def make_dir(path):
             raise
 
 
+def base36encode(number):
+    alphabet, base36 = '0123456789abcdefghijklmnopqrstuvwxyz', ''
+    while number:
+        number, i = divmod(number, 36)
+        base36 = alphabet[i] + base36
+    return base36 or alphabet[0]
+
+
 class ClickListOption(click.Option):
 
     def type_cast_value(self, ctx, value):
